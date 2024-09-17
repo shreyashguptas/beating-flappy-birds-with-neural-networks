@@ -6,22 +6,25 @@ from config import Config
 import torch
 import csv
 from datetime import datetime, timedelta
+from image_preprocessor import preprocess_images
 
 # Initialize Pygame
 pygame.init()
 
 # Game Constants
 WIDTH, HEIGHT = 400, 600
+
+# Preprocess images
+preprocess_images(WIDTH, HEIGHT)
+
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
 CLOCK = pygame.time.Clock()
 FONT = pygame.font.SysFont('comicsans', 30)
 
-# Load images
+# Load images (now they're already scaled)
 BIRD_IMG = pygame.image.load('assets/bird.png')
-BIRD_IMG = pygame.transform.scale(BIRD_IMG, (50, 50))
 PIPE_IMG = pygame.image.load('assets/pipe.png')
 BG_IMG = pygame.image.load('assets/background.png')
-BG_IMG = pygame.transform.scale(BG_IMG, (WIDTH, HEIGHT))
 
 # Player settings
 PLAYER_WIDTH, PLAYER_HEIGHT = 50, 50
@@ -48,8 +51,8 @@ def draw_player(x, y):
 def draw_obstacle(obstacles):
     for obs in obstacles:
         # Draw top pipe
-        pipe_top = pygame.transform.flip(PIPE_IMG, False, True)
-        SCREEN.blit(pipe_top, (obs[0], obs[1] - OBSTACLE_GAP // 2 - pipe_top.get_height()))
+        top_pipe = pygame.transform.flip(PIPE_IMG, False, True)
+        SCREEN.blit(top_pipe, (obs[0], obs[1] - OBSTACLE_GAP // 2 - PIPE_IMG.get_height()))
         # Draw bottom pipe
         SCREEN.blit(PIPE_IMG, (obs[0], obs[1] + OBSTACLE_GAP // 2))
 
@@ -57,11 +60,20 @@ def reset_game():
     global PLAYER_Y, player_velocity, obstacles, score, start_time
     PLAYER_Y = HEIGHT // 2
     player_velocity = 0
-    obstacles = [[WIDTH, random.randint(50, HEIGHT - 150), HEIGHT]]
+    obstacles = [[WIDTH, random.randint(OBSTACLE_GAP, HEIGHT - OBSTACLE_GAP), HEIGHT]]
     score = 0
     if start_time is None:
         start_time = datetime.now()
     return np.array([PLAYER_Y, player_velocity, WIDTH, obstacles[0][1]])
+
+def check_collision(player_y, obstacles):
+    player_rect = pygame.Rect(PLAYER_X, player_y, PLAYER_WIDTH, PLAYER_HEIGHT)
+    for obs in obstacles:
+        top_pipe = pygame.Rect(obs[0], 0, OBSTACLE_WIDTH, obs[1] - OBSTACLE_GAP // 2)
+        bottom_pipe = pygame.Rect(obs[0], obs[1] + OBSTACLE_GAP // 2, OBSTACLE_WIDTH, HEIGHT - (obs[1] + OBSTACLE_GAP // 2))
+        if player_rect.colliderect(top_pipe) or player_rect.colliderect(bottom_pipe):
+            return True
+    return False
 
 def game_step(action):
     global PLAYER_Y, player_velocity, obstacles, score
@@ -74,7 +86,7 @@ def game_step(action):
     for obs in obstacles:
         obs[0] -= config.obstacle_speed
     if obstacles[-1][0] < WIDTH - OBSTACLE_GAP:
-        obstacles.append([WIDTH, random.randint(50, HEIGHT - 150), HEIGHT])
+        obstacles.append([WIDTH, random.randint(OBSTACLE_GAP, HEIGHT - OBSTACLE_GAP), HEIGHT])
     if obstacles[0][0] < -OBSTACLE_WIDTH:
         obstacles.pop(0)
 
@@ -82,8 +94,14 @@ def game_step(action):
     score += 1
 
     state = np.array([PLAYER_Y, player_velocity, obstacles[0][0], obstacles[0][1]])
-    reward = config.positive_reward if PLAYER_Y > 0 and PLAYER_Y < HEIGHT else config.negative_reward
-    done = False if reward > 0 else True
+    
+    # Check for collisions with pipes or screen boundaries
+    if check_collision(PLAYER_Y, obstacles) or PLAYER_Y <= 0 or PLAYER_Y >= HEIGHT - PLAYER_HEIGHT:
+        reward = config.negative_reward
+        done = True
+    else:
+        reward = config.positive_reward
+        done = False
 
     return state, reward, done
 
